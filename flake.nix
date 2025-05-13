@@ -71,75 +71,81 @@
       in
       {
         systems = import inputs.systems;
-        flake =
-          { self, ... }:
-          {
-            nixosModules.default =
-              { pkgs, ... }:
-              {
-                imports = [ ./module.nix ];
-                services.authentik.authentikComponents = pkgs.lib.mkDefault (
-                  withSystem pkgs.stdenv.hostPlatform.system (
-                    { config, ... }:
-                    {
-                      inherit (config.packages)
-                        manage
-                        staticWorkdirDeps
-                        migrate
-                        pythonEnv
-                        frontend
-                        gopkgs
-                        docs
-                        ;
-                    }
-                  )
-                );
+        flake = _: {
+          nixosModules.default =
+            { ... }:
+            let
+              pkgs = inputs.nixpkgs.legacyPackages;
+            in
+            {
+              imports = [
+                (import ./module.nix {
+                  inherit pkgs;
+                  inherit (pkgs) lib;
+                })
+              ];
+              services.authentik.authentikComponents = pkgs.lib.mkDefault (
+                withSystem pkgs.stdenv.hostPlatform.system (
+                  { config, ... }:
+                  {
+                    inherit (config.packages)
+                      manage
+                      staticWorkdirDeps
+                      migrate
+                      pythonEnv
+                      frontend
+                      gopkgs
+                      docs
+                      ;
+                  }
+                )
+              );
+            };
+
+          # returns a scope which includes the attrset `authentikComponents`
+          #
+          # the returned scope may be overridden using its `overrideScope` function to
+          # create a new scope with patched versions of individual authentik components
+          #
+          # see ./tests/override-scope.nix for a usage example
+          lib.mkAuthentikScope =
+            let
+              authentik-version' = authentik-version;
+            in
+            {
+              pkgs,
+              system ? pkgs.stdenv.hostPlatform.system,
+              python ? pkgs.python312,
+              authentik-version ? authentik-version',
+              buildNapalmPackage ? napalm.legacyPackages.${system}.buildPackage,
+            }:
+            pkgs.lib.makeScope pkgs.newScope (final: {
+              authentikComponents = {
+                docs = final.callPackage ./components/docs.nix { };
+                frontend = final.callPackage ./components/frontend.nix { };
+                pythonEnv = final.callPackage ./components/pythonEnv.nix { };
+                # server + outposts
+                gopkgs = final.callPackage ./components/gopkgs.nix { };
+                staticWorkdirDeps = final.callPackage ./components/staticWorkdirDeps.nix { };
+                migrate = final.callPackage ./components/migrate.nix { };
+                # worker
+                manage = final.callPackage ./components/manage.nix { };
               };
 
-            # returns a scope which includes the attrset `authentikComponents`
-            #
-            # the returned scope may be overridden using its `overrideScope` function to
-            # create a new scope with patched versions of individual authentik components
-            #
-            # see ./tests/override-scope.nix for a usage example
-            lib.mkAuthentikScope =
-              let
-                authentik-version' = authentik-version;
-              in
-              {
-                pkgs,
-                system ? pkgs.stdenv.hostPlatform.system,
-                python ? pkgs.python312,
-                authentik-version ? authentik-version',
-                buildNapalmPackage ? napalm.legacyPackages.${system}.buildPackage,
-              }:
-              pkgs.lib.makeScope pkgs.newScope (final: {
-                authentikComponents = {
-                  docs = final.callPackage ./components/docs.nix { };
-                  frontend = final.callPackage ./components/frontend.nix { };
-                  pythonEnv = final.callPackage ./components/pythonEnv.nix { };
-                  # server + outposts
-                  gopkgs = final.callPackage ./components/gopkgs.nix { };
-                  staticWorkdirDeps = final.callPackage ./components/staticWorkdirDeps.nix { };
-                  migrate = final.callPackage ./components/migrate.nix { };
-                  # worker
-                  manage = final.callPackage ./components/manage.nix { };
-                };
+              # for uv2nix
+              pythonOverlay = final.callPackage ./components/python-overrides.nix { };
 
-                # for uv2nix
-                pythonOverlay = final.callPackage ./components/python-overrides.nix { };
-
-                inherit
-                  authentik-src
-                  authentik-version
-                  buildNapalmPackage
-                  uv2nix
-                  pyproject-build-systems
-                  pyproject-nix
-                  python
-                  ;
-              });
-          };
+              inherit
+                authentik-src
+                authentik-version
+                buildNapalmPackage
+                uv2nix
+                pyproject-build-systems
+                pyproject-nix
+                python
+                ;
+            });
+        };
         perSystem =
           {
             pkgs,
